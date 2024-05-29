@@ -1,15 +1,23 @@
 import pickle, io
-from typing import List, Any, Optional, Mapping, Generator
+from __future__ import annotations
+from typing import List, Any, Optional, Generator, Callable
+from errors import LimitReached, NoArgumentsGiven
 
-class LimitReached(Exception):
-    pass
+class _MissingSentinel:
+    def __repr__(self) -> str:
+        return "MISSING"
 
-class Node:
-    ... # only for typehinting
+    def __reduce__(self) -> str:
+        return "MISSING"
+    
+MISSING: Any = _MissingSentinel
+
+SearchCheck = Callable[[Any], bool]
 
 class Node:
     """
-    ### Overview
+    ### Overview:
+
     A simple but effective singular node, with the capabilities of attaching children, having siblings and more.
     
     You can export a node by serialising it into a `.pkl` file and all its accompanying children will follow,
@@ -21,30 +29,41 @@ class Node:
     You can add other nodes, remove any nodes on the list.
 
     ### Parameters:
-        - name: `str` - The name of the node. This `must` be a valid Python variable name as the class
-        allows you to mention child nodes as attributes of the current node. This would not be possible
-        if the names were not allowed in Python.
+
+    - name: `str` - The name of the node. This must be a valid Python variable name as the class
+    allows you to mention child nodes as attributes of the current node. This would not be possible
+    if the names were not allowed in Python.
         
-        - value: `Any` - Simply just the value the node possesses. As depicted by the typehint, it can
-        be anything - no limits.
+    - value: `Any` - The value the node possesses.
 
-        - node_cap: `int` - The number of children one node can possess. If left unfilled, it defaults
-        to `None` which allows for an unlimited amount of nodes as children of one node.
+    - node_cap: `int` - The number of children this node can possess. If left unfilled, it defaults
+    to `None` which allows for an unlimited amount of nodes as children of one node.
     
-    
-    ### Guide
+    ### Raises:
 
+    - `TypeError` - raised when:
+        - `name` is not a string
+        - `node_cap` is not an integer and is not `None` (there is a value but it's not a number)
+    
+    - `ValueError` - raised when the name is not a valid Python variable name.
+
+    - `ArithmeticError` - raised when `node_cap` is not a positive integer.
     """
     
     def __init__(self, name: str, value: Any, node_cap: int = None) -> None:
-        # assertions
-        assert type(name) is str, "name must be a string."
-        assert name.isalnum() and not name[0].isdigit(), "name must be a valid variable name."
-        assert type(node_cap) is int or node_cap is None, f"node_cap must be of type int or None. Node cap variable is of type {type(node_cap)}"
+        # type checks
+        if type(name) is not str:
+            raise TypeError("name must be a string.")
+        
+        if not name.isalnum() or name[0].isdigit():
+            raise ValueError("name must be a valid variable name.")
+        
+        if type(node_cap) is not int and node_cap is not None:
+            raise TypeError(f"node_cap must be of type int or None. Node cap variable is of type {type(node_cap)}")
         
         # check if node cap has been reached
-        if node_cap:
-            assert node_cap > 0, f"node_cap must be above 0, not {node_cap}."
+        if node_cap and not node_cap > 0:
+            raise ArithmeticError(f"node_cap must be above 0, not {node_cap}.")
 
         # parameters
         self.name = name
@@ -70,7 +89,8 @@ class Node:
         """
         The children of the current node.
         
-        Given in the form of a list of `Node`.
+        Returns:
+            - `List[Node]`
         """
         
         return self.__children
@@ -80,7 +100,8 @@ class Node:
         """
         The siblings of the current node.
         
-        Given in the form of a list of `Node`.
+        Returns:
+            - `List[Node]`
         """
         
         return self.__siblings
@@ -90,7 +111,8 @@ class Node:
         """
         The parent of the current node.
         
-        Given in the form of a `Node`.
+        Returns:
+            - `List[Node]`.
         """
         
         return self.__parent
@@ -98,23 +120,23 @@ class Node:
     def add(self, *children: Node) -> Node:
         """
         Add children to the current node.
-        Note that this will raise a TypeError if any of the children given are not of type Node.
 
         Parameters:
             - children: `Node` - the children to be added to the node.
         
         Raises:
             - `ArithmeticError`: raised when the node cap on the parent is exceeded or when not all children are Node instances.
+            
             - `TypeError`: raised when a child in `children` is found to not be of type `Node`.
+            
             - `ValueError`: raised when a child's tier is equal to or greater than the current node's tier,
             meaning it is attempting to be placed beside or above the current node, creating problems when searching.
+            
             - `NameError`: one of the children's names is a duplicate of a child of the current node, thus creating
             naming errors when referencing as attributes.
 
         This also returns the node itself to allow for fluent-style chaining.
         """
-
-        assert all(isinstance(child, Node) for child in children), f"not all children given are Node instances."
 
         if self.node_cap:
             total_node_count = len(self.__children) + len(children)
@@ -178,69 +200,120 @@ class Node:
         
         return self
 
-    def search_for(self, strict: bool = False, **search_kwargs) -> Optional[Node]:
+    def __search_for(
+            self,
+            *,
+            name: Optional[str] = MISSING,
+            value: Optional[Any] = MISSING,
+            check: Optional[SearchCheck] = None
+        ) -> Optional[Node]:
+        """
+        Base method for searching for a given node using a variety of checks like:
+            - name checks
+            - value checks
+            - lambda / function checks
+        
+        Parameters:
+            - name: `Optional[str]` - the name of the node to search for. Defaults to `MISSING`.
+            - value: `Optional[Any]` - the value of the node to search for. Defaults to `MISSING`.
+            - check: `Optional[SearchCheck]` - the lambda / function to check for a matching node with. Defaults to `None`.
+        
+        Returns:
+            - `Optional[Node]` - the matching node or `None`.
+        """
+
+        if name is not MISSING and value == self.name:
+            return self
+        
+        if value is not MISSING and value == self.value:
+            return self
+        
+        if check is not None and check(self):
+            return self
+        
+        for child in self.__children:
+            result = child.search_for(name = name, value = value, check = check)
+
+            if result is not None:
+                return result
+        
+        return None
+
+    def search_for(
+            self,
+            *,
+            name: Optional[str] = MISSING,
+            value: Optional[Any] = MISSING,
+            check: Optional[SearchCheck] = None
+        ) -> Optional[Node]:
         """
         Search for a target node below the current node using kwargs.
-        
-        If an `AttributeError` is encountered, it is skipped and the search will continue by default.
-        This behaviour can be toggled using the `strict` argument.
+
+        Includes type checks.
 
         Parameters:
-            - strict: `bool` - whether or not to raise an `AttributeError` upon searching for a nonexistent attribute.
-            - `search_kwargs` - the search terms to compare each node against.
+            name: `Optional[str]` - the name to look for when checking each node (or `MISSING`)
+            value: `Optional[Any]` - the value to look for when checking each node (or `MISSING`)
+            check: `Optional[SearchCheck]` - a check function used to find a node instead of a kwarg.
 
-        Returns;
-            - `Node`: the node being looked for in the recursive search.
-            - `None`: poof - nothing.
+        Returns:
+            - `Optional[Node]`: the node being looked for in the recursive search, or `None`.
+
+        Raises:
+            - `TypeError` - raised when an incorrect type for an argument is given.
+            - `NoArgumentsGiven` - raised when both `name` and `value` are `MISSING` and `check` is `None`.
+            - `ImproperArgument` - raised when `name` is not a valid Python variable name.
+        
+        Thank you to Chai (@trevorfl) for correcting this.
         """
 
-        for child in self.__children:
-            for kwarg in search_kwargs.keys():
-                try:
-                    if getattr(child, kwarg) == search_kwargs[kwarg]:
-                        return child # found match
+        if not isinstance(name, str) and name is not MISSING:
+            message = "name of the node to search for must be a string."
+            raise TypeError(message)
 
-                except AttributeError as e:
-                    if strict:
-                        raise e
-                    
-                    continue
+        if not name.isalnum() or name[0].isdigit():
+            message = "name of the node to search for must be a valid Python variable name."
+            raise ValueError(message)
 
-            result = child.search_for(strict, **search_kwargs)
-
-            if result:
-                return result
-
-        return None
+        if name is MISSING and value is MISSING and check is None:
+            message = "no arguments were given to the function."
+            raise NoArgumentsGiven(message)
+        
+        return self.__search_for(name = name, value = value, check = check)
     
-    def __collect(self, starting_node: Node) -> Generator:
+    def __collect(self, starting_node: Node) -> Generator[Node]:
         """
         Returns the base generator for `.collect()` to turn into a list.
 
-        I advise you use `.collect()` instead of this method. That's where the more complete docstring is found.
+        Parameters:
+            - starting_node: `Node` - the node to collect all descendants from.
+        
+        Returns:
+            - `Generator[Node]` - an iterable of `Node` instances.
         """
 
-        assert type(starting_node) is Node, f"starting node must be of type Node. Currently, it is of type {type(starting_node)}"
+        if not isinstance(node, Node):
+            raise TypeError(f"starting node must be of type Node. Currently, it is of type {type(starting_node)}")
         
         for node in starting_node.__children:
-            if node.__children:            
+            if node.__children:
                 for new in self.search(node):
                     yield new
 
             yield node
     
-    def collect(self, starting_node: Node) -> List:
+    def collect(self, starting_node: Node) -> List[Node]:
         """
-        Recursively and iteratively yield children from the current node in the form of a flattened list.
+        Recursively and iteratively yield descendants from the current node and return in the form of a flattened list.
 
         Parameters:
-            - starting_node: `Node` - the node to start collecting children from.
+            - starting_node: `Node` - the node to collect descendants from.
         
         Returns:
-            - `List[Node]` - a list of children nodes (depth is ignored)
+            - `List[Node]` - a list of descendants from the starting node.
         
         Raises:
-            - `AssertionError` - raised when `starting_node` is not a `Node` instance
+            - `TypeError` - raised when `starting_node` is not a `Node` instance.
         """
 
         return list(self.__collect(starting_node))[::-1]
@@ -251,14 +324,20 @@ class Node:
         
         To retrieve the contents from a .pkl file, use `.unpickle()`.
 
-        Note: `fp` must be in `wb` (write bytes) mode, otherwise the function will fail.
-
         Parameters:
             - fp: `io.BufferedWriter` - the file pointer to dump the node with.
-            - node: `Node` - the node to dump into the file along with its children.
+            - node: `Node` - the node to serialise.
+        
+        Raises:
+            - `ValueError` - raised when the `node` argument is not an instance of `Node`.
+            - `pickle.PicklingError` - raised when the `node` argument cannot be pickled.
 
-        Note that if `node` is left out then it will default to `self`.
+        Returns:
+            - `self` - the instance running the method.
         """
+
+        if not isinstance(node, Node):
+            raise ValueError(f"node parameter is not of type Node - currently it is of type {type(node)}s")
         
         node = node or self
         pickle.dump(obj = node, file = fp)
@@ -266,16 +345,19 @@ class Node:
     def unpickle(self, fp: io.BufferedReader) -> Node | Any:
         """
         Retrieve a node and its accompanying children from a .pkl file and return it.
-        To dump the contents into a .pkl file, use `.pickle()`.
-
-        `fp` must be in `wb` (write bytes) mode, otherwise the function will fail.
+        
+        To dump the contents into a `.pkl` file, use `.pickle()`.
 
         Parameters:
             - fp: `io.BufferedReader` - the file pointer to dump the node with.
 
         Returns:
             - `Node` - the node retrieved from the file.
-            - `Any` - may return something unexpected if the file doesn't only contain the node.
+            - `Any` - may return something unexpected if the file doesn't only contain the node or contains something else.
+        
+        Raises:
+            - `pickle.UnpicklingError` - raised when the file cannot be deserealised.
+            - `io.UnsupportedOperation` - raised when the wrong mode for the file is used.
         """
 
         node = pickle.load(fp)
@@ -298,8 +380,20 @@ class Node:
         "Return the next set of nodes that are children of the current node."
         return self.__children
     
-    def __left__(self):
-        "Custom dunder method for the `left()` function."
+    def left(self):
+        """
+        Executes the special dunder method to move left through the given node's siblings.
+
+        Parameters:
+            - node: `Node` - the node to move left from.
+
+        Returns:
+            - `Node` - the sibling left of the given node in the tree.
+
+        Raises:
+            - `AssertionError` - raised when the given argument isn't a `Node` instance.
+            - `LimitReached` - raised when you can no longer go left, ie. the limit is reached for moving left.
+        """
         
         siblings = self.parent.__children
 
@@ -309,9 +403,21 @@ class Node:
         self.__index -= 1
         return siblings[self.__index]
     
-    def __right__(self) -> Node:
-        "Custom dunder method for the `right()` function."
+    def right(self) -> Node:
+        """
+        Executes the special dunder method to move right through the given node's siblings.
 
+        Parameters:
+            - node: `Node` - the node to move right from.
+
+        Returns:
+            - `Node` - the sibling right of the given node in the tree.
+
+        Raises:
+            - `AssertionError` - raised when the given argument isn't a `Node` instance.
+            - `LimitReached` - raised when you can no longer go right, ie. the limit is reached for moving right.
+        """
+        
         siblings = self.parent.__children
 
         if self.__index == len(siblings) - 1:
@@ -319,3 +425,5 @@ class Node:
 
         self.__index += 1
         return siblings[self.__index]
+
+Node().search

@@ -1,2 +1,2 @@
 from node import Node
-from utils import left, right
+from errors import *
