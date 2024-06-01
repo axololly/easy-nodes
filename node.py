@@ -135,7 +135,8 @@ class Node:
             - `NameError`: one of the children's names is a duplicate of a child of the current node, thus creating
             naming errors when referencing as attributes.
 
-        This also returns the node itself to allow for fluent-style chaining.
+        Returns:
+            `self` - the node itself to allow for fluent-style chaining.
         """
 
         if self.node_cap:
@@ -158,14 +159,17 @@ class Node:
                 raise NameError(name_error_msg)
             
             self.__children.append(child)
-            child.full_path += child.name + '/'
             
             setattr(self, child.name, child)
 
+            child.full_path += child.name + '/'
             child.__parent = self
+            
             child.__siblings = self.__children.copy()
             child.__siblings.remove(child)
+            
             child.__tier = self.__tier + 1
+            child.__index = len(self.__children) - 1
         
         return self
     
@@ -183,7 +187,8 @@ class Node:
 
         Note that if children are not entirely of type Node, a TypeError is raised.
 
-        This also returns the node itself to allow for fluent-style chaining.
+        Returns:
+            - `self` - the node itself to allow for fluent-style chaining.
         """
         
         for child in children:
@@ -425,5 +430,3 @@ class Node:
 
         self.__index += 1
         return siblings[self.__index]
-
-Node().search
