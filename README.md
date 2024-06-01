@@ -1,4 +1,4 @@
-# EasyNodes
+# Easy Nodes
 
 ## Description
 Still to come...
